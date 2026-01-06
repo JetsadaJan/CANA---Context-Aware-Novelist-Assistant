@@ -1,109 +1,14 @@
 
 import React, { useState } from 'react';
 import { StoryBible, Character, WorldClass, WorldItem, TimelineEvent, KeyValue, CharacterCategory, TimelineLevel } from '../types';
-import { Plus, X, Globe, Trash2, FolderOpen, Database, ChevronRight, Activity, History, Bookmark, Users, Layers, GripVertical } from 'lucide-react';
+import { Plus, X, Globe, Trash2, FolderOpen, Database, ChevronRight, Activity, History, Bookmark, Users, Layers, ChevronUp, ChevronDown } from 'lucide-react';
 import { generateId } from '../services/storage';
-
-// DND Kit
-import {
-  DndContext, 
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragOverlay,
-  useDroppable,
-  defaultDropAnimationSideEffects,
-  DragEndEvent,
-  DragStartEvent
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 
 interface BibleManagerProps {
   bible: StoryBible;
   setBible: React.Dispatch<React.SetStateAction<StoryBible>>;
   view: 'BIBLE' | 'WORLD' | 'CHARACTERS' | 'TIMELINE';
 }
-
-// --- DRAG AND DROP COMPONENTS ---
-
-interface SortableItemProps {
-  id: string;
-  data: any;
-  children: React.ReactNode;
-  className?: string;
-}
-
-const SortableItem: React.FC<SortableItemProps> = ({ id, data, children, className }) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging
-  } = useSortable({ id, data });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
-    zIndex: isDragging ? 50 : 'auto',
-    position: 'relative' as const,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} className={className}>
-       {/* Pass drag handle via context or clone element if needed, but here we just pass the listeners to a handle inside children if we wanted. 
-           However, to make it easier, we will attach listeners to a specific handle element passed in children. 
-           Actually, let's wrap the children in a context or render prop. 
-           Simplest: Just pass attributes/listeners to the children as a prop? No.
-           Let's just attach listeners to a Handle component if we can.
-           
-           For this implementation, I'll pass a "DragHandle" component function to the children, or simpler:
-           I will export a DragHandle component that uses the context? No, listeners are here.
-           
-           Let's just expect the caller to place the handle.
-       */}
-      <div className="absolute left-2 top-4 z-10 cursor-grab active:cursor-grabbing text-gray-600 hover:text-gray-400" {...attributes} {...listeners}>
-         <GripVertical className="w-5 h-5" />
-      </div>
-      <div className="pl-8"> 
-        {children}
-      </div>
-    </div>
-  );
-};
-
-const TrashCan = ({ active }: { active: boolean }) => {
-    const { setNodeRef, isOver } = useDroppable({
-        id: 'trash-can',
-    });
-
-    if (!active) return null;
-
-    return (
-        <div 
-            ref={setNodeRef}
-            className={`fixed bottom-8 right-8 p-6 rounded-full transition-all duration-300 z-[100] shadow-2xl flex items-center justify-center border-2 ${
-                isOver 
-                ? 'bg-red-600 border-red-400 scale-125 rotate-12' 
-                : 'bg-gray-800 border-gray-600 opacity-80 hover:opacity-100'
-            }`}
-        >
-            <Trash2 className={`w-8 h-8 ${isOver ? 'text-white animate-bounce' : 'text-gray-400'}`} />
-        </div>
-    );
-};
-
 
 const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) => {
   // World State
@@ -113,116 +18,49 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
   // Character State
   const [charSubTab, setCharSubTab] = useState<'roster' | 'classes'>('roster');
 
-  // Drag State
-  const [activeDragId, setActiveDragId] = useState<string | null>(null);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-        activationConstraint: {
-            distance: 8, // Minimum drag distance before activation to prevent accidental drags when clicking inputs
-        },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
   // Helper for simple updates
   const updateBible = (updates: Partial<StoryBible>) => {
     setBible(prev => ({ ...prev, ...updates }));
   };
 
-  // --- DELETE HANDLERS ---
+  // ================= SORTING HELPERS =================
 
-  const handleDeleteDrop = (type: string, id: string) => {
-      if (type === 'WORLD_ITEM') deleteWorldItem(null, id, true);
-      else if (type === 'WORLD_CLASS') deleteWorldClass(null, id, true);
-      else if (type === 'CHARACTER') deleteCharacter(null, id, true);
-      else if (type === 'CHAR_CLASS') deleteCharClass(null, id, true);
-      else if (type === 'TIMELINE_EVENT') deleteTimelineEvent(null, id, true);
+  // Generic array move
+  const moveItemInArray = <T extends { id: string }>(
+      fullArray: T[], 
+      subsetArray: T[], // The filtered view the user sees
+      id: string, 
+      direction: 'up' | 'down'
+  ): T[] => {
+      const subsetIndex = subsetArray.findIndex(x => x.id === id);
+      if (subsetIndex === -1) return fullArray;
+      if (direction === 'up' && subsetIndex === 0) return fullArray;
+      if (direction === 'down' && subsetIndex === subsetArray.length - 1) return fullArray;
+
+      const targetSubsetIndex = direction === 'up' ? subsetIndex - 1 : subsetIndex + 1;
+      
+      const itemA = subsetArray[subsetIndex];
+      const itemB = subsetArray[targetSubsetIndex];
+
+      // We need to swap them in the FULL array.
+      // Strategy: Map the full array, swapping the instances of itemA and itemB
+      const indexA = fullArray.findIndex(x => x.id === itemA.id);
+      const indexB = fullArray.findIndex(x => x.id === itemB.id);
+
+      if (indexA === -1 || indexB === -1) return fullArray;
+
+      const newArray = [...fullArray];
+      // Swap positions in the main array directly? 
+      // This works if we want to preserve exact global positions, but if the filtered list 
+      // implies they should be adjacent, this might behave oddly if they are far apart in global list.
+      // BUT, for simple lists like classes or characters, this simple swap is usually what users expect.
+      // However, for World Items which are filtered by class, simple swap of indices is safer.
+      
+      newArray[indexA] = fullArray[indexB];
+      newArray[indexB] = fullArray[indexA];
+      
+      return newArray;
   };
-
-  // ================= DND EVENT HANDLERS =================
-  const handleDragStart = (event: DragStartEvent) => {
-      setActiveDragId(event.active.id as string);
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-      const { active, over } = event;
-      setActiveDragId(null);
-
-      if (!over) return;
-
-      const activeData = active.data.current || {};
-      const type = activeData.type;
-
-      // 1. Handle Trash Drop
-      if (over.id === 'trash-can') {
-          handleDeleteDrop(type, active.id as string);
-          return;
-      }
-
-      // 2. Handle Reordering
-      if (active.id !== over.id) {
-          setBible((prev) => {
-              if (type === 'WORLD_ITEM') {
-                  // Reordering in the global list or the filtered list?
-                  // We should find the indices in the main list.
-                  const oldIndex = prev.worldItems.findIndex(i => i.id === active.id);
-                  const newIndex = prev.worldItems.findIndex(i => i.id === over.id);
-                  return { ...prev, worldItems: arrayMove(prev.worldItems, oldIndex, newIndex) };
-              }
-              if (type === 'WORLD_CLASS') {
-                  const oldIndex = prev.worldClasses.findIndex(i => i.id === active.id);
-                  const newIndex = prev.worldClasses.findIndex(i => i.id === over.id);
-                  return { ...prev, worldClasses: arrayMove(prev.worldClasses, oldIndex, newIndex) };
-              }
-              if (type === 'CHARACTER') {
-                  const oldIndex = prev.characters.findIndex(i => i.id === active.id);
-                  const newIndex = prev.characters.findIndex(i => i.id === over.id);
-                  return { ...prev, characters: arrayMove(prev.characters, oldIndex, newIndex) };
-              }
-              if (type === 'CHAR_CLASS') {
-                  const oldIndex = prev.characterCategories.findIndex(i => i.id === active.id);
-                  const newIndex = prev.characterCategories.findIndex(i => i.id === over.id);
-                  return { ...prev, characterCategories: arrayMove(prev.characterCategories, oldIndex, newIndex) };
-              }
-              if (type === 'TIMELINE_EVENT') {
-                  // Reorder within siblings
-                  // This is more complex because of 'order' field. 
-                  // We'll update the 'order' field based on new array position relative to parent.
-                  // For simplicity, let's treat the displayed list as a flat list for finding indices if possible, 
-                  // but we are rendering recursively. 
-                  // Limitation: dragging between different parents is hard. We will assume reordering siblings.
-                  
-                  // Strategy: Find common parent.
-                  const activeItem = prev.timeline.find(t => t.id === active.id);
-                  const overItem = prev.timeline.find(t => t.id === over.id);
-                  
-                  if (activeItem && overItem && activeItem.parentId === overItem.parentId) {
-                      const siblings = prev.timeline.filter(t => t.parentId === activeItem.parentId).sort((a,b) => a.order - b.order);
-                      const oldIndex = siblings.findIndex(t => t.id === active.id);
-                      const newIndex = siblings.findIndex(t => t.id === over.id);
-                      
-                      const newSiblings = arrayMove(siblings, oldIndex, newIndex);
-                      
-                      // Assign new orders
-                      const updates = newSiblings.map((t, idx) => ({ id: t.id, order: idx }));
-                      
-                      return {
-                          ...prev,
-                          timeline: prev.timeline.map(t => {
-                              const update = updates.find(u => u.id === t.id);
-                              return update ? { ...t, order: update.order } : t;
-                          })
-                      };
-                  }
-              }
-              return prev;
-          });
-      }
-  };
-
 
   // ================= WORLD BUILDING (OOP) HANDLERS =================
   const addWorldClass = () => {
@@ -235,6 +73,13 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
       setSelectedWorldClassId(newClass.id);
   };
   
+  const moveWorldClass = (id: string, dir: 'up' | 'down') => {
+      setBible(prev => ({
+          ...prev,
+          worldClasses: moveItemInArray(prev.worldClasses, prev.worldClasses, id, dir)
+      }));
+  };
+
   const updateWorldClass = (id: string, updates: Partial<WorldClass>) => {
       setBible(prev => ({
           ...prev,
@@ -351,8 +196,19 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
               description: "",
               attributes: attrs
           };
+          // Prepend to top
           return { ...prev, worldItems: [newItem, ...prev.worldItems] };
       });
+  };
+
+  const moveWorldItem = (id: string, classId: string, dir: 'up' | 'down') => {
+     setBible(prev => {
+         const itemsInClass = prev.worldItems.filter(i => i.classId === classId);
+         return {
+             ...prev,
+             worldItems: moveItemInArray(prev.worldItems, itemsInClass, id, dir)
+         };
+     });
   };
 
   const updateWorldItem = (itemId: string, updates: Partial<WorldItem>) => {
@@ -397,6 +253,33 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
               order: prev.timeline.filter(t => t.parentId === parentId).length
           };
           return { ...prev, timeline: [...prev.timeline, newEvent] };
+      });
+  };
+  
+  const moveTimelineEvent = (id: string, parentId: string | undefined, dir: 'up' | 'down') => {
+      setBible(prev => {
+          const siblings = prev.timeline.filter(t => t.parentId === parentId).sort((a,b) => a.order - b.order);
+          const currentIndex = siblings.findIndex(t => t.id === id);
+          if (currentIndex === -1) return prev;
+          if (dir === 'up' && currentIndex === 0) return prev;
+          if (dir === 'down' && currentIndex === siblings.length - 1) return prev;
+
+          const targetIndex = dir === 'up' ? currentIndex - 1 : currentIndex + 1;
+          const currentItem = siblings[currentIndex];
+          const targetItem = siblings[targetIndex];
+          
+          // Swap orders
+          const newOrderA = targetItem.order;
+          const newOrderB = currentItem.order;
+
+          return {
+              ...prev,
+              timeline: prev.timeline.map(t => {
+                  if (t.id === currentItem.id) return { ...t, order: newOrderA };
+                  if (t.id === targetItem.id) return { ...t, order: newOrderB };
+                  return t;
+              })
+          };
       });
   };
 
@@ -450,6 +333,13 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
     });
   };
   
+  const moveCharacter = (id: string, dir: 'up' | 'down') => {
+      setBible(prev => ({
+          ...prev,
+          characters: moveItemInArray(prev.characters, prev.characters, id, dir)
+      }));
+  };
+  
   const updateCharacter = (id: string, u: Partial<Character>) => {
       setBible(prev => ({
           ...prev,
@@ -498,6 +388,13 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
   // Class Handlers
   const addCharClass = () => {
       setBible(prev => ({ ...prev, characterCategories: [...prev.characterCategories, { id: generateId(), name: "New Class", template: [] }] }));
+  };
+
+  const moveCharClass = (id: string, dir: 'up' | 'down') => {
+      setBible(prev => ({
+          ...prev,
+          characterCategories: moveItemInArray(prev.characterCategories, prev.characterCategories, id, dir)
+      }));
   };
 
   const updateCharClass = (id: string, u: Partial<CharacterCategory>) => {
@@ -598,16 +495,8 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
 
   // ================= VIEW RENDERING =================
 
-  // Wrap everything in DndContext
   return (
-    <DndContext 
-        sensors={sensors} 
-        collisionDetection={closestCenter} 
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-    >
-        <TrashCan active={!!activeDragId} />
-
+    <>
         {view === 'BIBLE' && (
             <div className="max-w-3xl space-y-6 mx-auto p-8">
                 <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">
@@ -672,19 +561,21 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                             <button type="button" onClick={addWorldClass} className="text-indigo-400 bg-indigo-900/30 p-1.5 rounded hover:text-white"><Plus className="w-4 h-4" /></button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                        <SortableContext items={bible.worldClasses.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                            {bible.worldClasses.map(cls => (
-                                <SortableItem key={cls.id} id={cls.id} data={{ type: 'WORLD_CLASS', item: cls }}>
-                                    <button 
-                                        onClick={() => setSelectedWorldClassId(cls.id)} 
-                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm flex justify-between items-center group ${selectedWorldClassId === cls.id ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
-                                    >
-                                        <span className="truncate">{cls.name}</span>
-                                        {selectedWorldClassId === cls.id && <ChevronRight className="w-3 h-3" />}
-                                    </button>
-                                </SortableItem>
-                            ))}
-                        </SortableContext>
+                        {bible.worldClasses.map(cls => (
+                            <div key={cls.id} className="flex items-center gap-1 group">
+                                <button 
+                                    onClick={() => setSelectedWorldClassId(cls.id)} 
+                                    className={`flex-1 text-left px-3 py-2 rounded-lg text-sm flex justify-between items-center group ${selectedWorldClassId === cls.id ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
+                                >
+                                    <span className="truncate">{cls.name}</span>
+                                    {selectedWorldClassId === cls.id && <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                <div className="hidden group-hover:flex flex-col gap-0.5">
+                                    <button onClick={() => moveWorldClass(cls.id, 'up')} className="text-gray-600 hover:text-indigo-400 p-0.5"><ChevronUp className="w-3 h-3"/></button>
+                                    <button onClick={() => moveWorldClass(cls.id, 'down')} className="text-gray-600 hover:text-indigo-400 p-0.5"><ChevronDown className="w-3 h-3"/></button>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
 
@@ -747,46 +638,48 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                                             <p>No items in this class yet.</p>
                                         </div>
                                     )}
-                                    <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-                                        {items.map(item => (
-                                            <SortableItem key={item.id} id={item.id} data={{ type: 'WORLD_ITEM', item: item }}>
-                                                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-indigo-500/30 transition-all">
-                                                    <div className="flex justify-between items-start mb-2 gap-2">
-                                                        <div className="flex-1 min-w-0">
-                                                            <input 
-                                                                className="bg-transparent font-bold text-indigo-200 outline-none w-full"
-                                                                value={item.name}
-                                                                onChange={(e) => updateWorldItem(item.id, { name: e.target.value })}
-                                                                placeholder="Item Name"
-                                                            />
-                                                        </div>
-                                                        <button type="button" onClick={(e) => deleteWorldItem(e, item.id)} className="text-gray-600 hover:text-red-400 p-1 rounded hover:bg-gray-800 relative z-20 shrink-0 cursor-pointer"><Trash2 className="w-4 h-4" /></button>
-                                                    </div>
-                                                    <textarea 
-                                                        className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 mb-3 outline-none"
-                                                        value={item.description}
-                                                        onChange={(e) => updateWorldItem(item.id, { description: e.target.value })}
-                                                        placeholder="Description..."
-                                                        rows={2}
+                                    {items.map(item => (
+                                        <div key={item.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-indigo-500/30 transition-all relative group">
+                                            {/* Order Buttons */}
+                                            <div className="absolute right-12 top-4 flex flex-col gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                                                 <button onClick={() => moveWorldItem(item.id, activeClass.id, 'up')} className="text-gray-500 hover:text-indigo-400"><ChevronUp className="w-4 h-4" /></button>
+                                                 <button onClick={() => moveWorldItem(item.id, activeClass.id, 'down')} className="text-gray-500 hover:text-indigo-400"><ChevronDown className="w-4 h-4" /></button>
+                                            </div>
+
+                                            <div className="flex justify-between items-start mb-2 gap-2 pr-8">
+                                                <div className="flex-1 min-w-0">
+                                                    <input 
+                                                        className="bg-transparent font-bold text-indigo-200 outline-none w-full"
+                                                        value={item.name}
+                                                        onChange={(e) => updateWorldItem(item.id, { name: e.target.value })}
+                                                        placeholder="Item Name"
                                                     />
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                        {item.attributes.map(attr => (
-                                                            <div key={attr.id} className="flex items-center text-sm bg-gray-950/30 rounded px-2 py-1 border border-gray-800/50">
-                                                                <span className="text-gray-500 w-1/3 text-right pr-2 text-xs font-medium truncate">{attr.key}</span>
-                                                                <div className="w-px h-3 bg-gray-700 mr-2"></div>
-                                                                <input 
-                                                                    className="bg-transparent text-gray-200 outline-none flex-1"
-                                                                    value={attr.value}
-                                                                    onChange={(e) => updateItemAttribute(item.id, attr.id, e.target.value)}
-                                                                    placeholder="Value"
-                                                                />
-                                                            </div>
-                                                        ))}
-                                                    </div>
                                                 </div>
-                                            </SortableItem>
-                                        ))}
-                                    </SortableContext>
+                                                <button type="button" onClick={(e) => deleteWorldItem(e, item.id)} className="text-gray-600 hover:text-red-400 p-1 rounded hover:bg-gray-800 relative z-20 shrink-0 cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+                                            </div>
+                                            <textarea 
+                                                className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 mb-3 outline-none"
+                                                value={item.description}
+                                                onChange={(e) => updateWorldItem(item.id, { description: e.target.value })}
+                                                placeholder="Description..."
+                                                rows={2}
+                                            />
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                {item.attributes.map(attr => (
+                                                    <div key={attr.id} className="flex items-center text-sm bg-gray-950/30 rounded px-2 py-1 border border-gray-800/50">
+                                                        <span className="text-gray-500 w-1/3 text-right pr-2 text-xs font-medium truncate">{attr.key}</span>
+                                                        <div className="w-px h-3 bg-gray-700 mr-2"></div>
+                                                        <input 
+                                                            className="bg-transparent text-gray-200 outline-none flex-1"
+                                                            value={attr.value}
+                                                            onChange={(e) => updateItemAttribute(item.id, attr.id, e.target.value)}
+                                                            placeholder="Value"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                             </>
@@ -820,13 +713,18 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                              const nextType: TimelineLevel | null = evt.type === 'Saga' ? 'Arc' : evt.type === 'Arc' ? 'Episode' : null;
                              
                              return (
-                                 <SortableItem key={evt.id} id={evt.id} data={{ type: 'TIMELINE_EVENT', item: evt }}>
-                                    <div className={`mb-2 ${level > 0 ? 'ml-6 pl-4 border-l border-gray-800' : ''}`}>
-                                        <div className={`flex items-start gap-3 p-3 rounded-lg border group ${
+                                 <div key={evt.id} className={`mb-2 ${level > 0 ? 'ml-6 pl-4 border-l border-gray-800' : ''}`}>
+                                        <div className={`flex items-start gap-3 p-3 rounded-lg border group relative ${
                                             evt.type === 'Saga' ? 'bg-indigo-950/20 border-indigo-900/50' : 
                                             evt.type === 'Arc' ? 'bg-gray-900 border-gray-800' : 
                                             'bg-gray-950 border-gray-800/50'
                                         }`}>
+                                            {/* Order Buttons */}
+                                            <div className="flex flex-col gap-0.5 absolute -left-5 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                 <button onClick={() => moveTimelineEvent(evt.id, evt.parentId, 'up')} className="text-gray-600 hover:text-indigo-400"><ChevronUp className="w-3 h-3" /></button>
+                                                 <button onClick={() => moveTimelineEvent(evt.id, evt.parentId, 'down')} className="text-gray-600 hover:text-indigo-400"><ChevronDown className="w-3 h-3" /></button>
+                                            </div>
+
                                             <div className={`mt-1 shrink-0 ${
                                                 evt.type === 'Saga' ? 'text-indigo-400' : 
                                                 evt.type === 'Arc' ? 'text-purple-400' : 
@@ -866,13 +764,9 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                                         </div>
                                         {/* Children */}
                                         <div className="mt-2">
-                                            {/* Note: Nested sortable context for tree structures is complex. We enable sorting for immediate children only visually here. */}
-                                            <SortableContext items={children.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                                                {children.map(child => renderEventNode(child, level + 1))}
-                                            </SortableContext>
+                                            {children.map(child => renderEventNode(child, level + 1))}
                                         </div>
                                     </div>
-                                 </SortableItem>
                              );
                          };
    
@@ -884,11 +778,7 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                              </div>
                          );
 
-                         return (
-                            <SortableContext items={rootEvents.map(r => r.id)} strategy={verticalListSortingStrategy}>
-                                {rootEvents.map(evt => renderEventNode(evt, 0))}
-                            </SortableContext>
-                         );
+                         return rootEvents.map(evt => renderEventNode(evt, 0));
                      })()}
                  </div>
              </div>
@@ -907,54 +797,56 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                             <h2 className="text-xl font-bold text-gray-100">Roster</h2>
                             <button onClick={addCharacter} className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm flex gap-2 items-center cursor-pointer"><Plus className="w-4 h-4"/> Add</button>
                         </div>
-                        <SortableContext items={bible.characters.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                            {bible.characters.map((char) => (
-                                <SortableItem key={char.id} id={char.id} data={{ type: 'CHARACTER', item: char }}>
-                                    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-700">
-                                        <div className="flex justify-between items-start mb-3 gap-2">
-                                            <div className="flex-1 min-w-0">
-                                                <input className="bg-transparent text-lg font-bold text-gray-100 outline-none w-full" value={char.name} onChange={(e) => updateCharacter(char.id, { name: e.target.value })} placeholder="Name" />
-                                            </div>
-                                            <button type="button" onClick={(e) => deleteCharacter(e, char.id)} className="text-gray-600 hover:text-red-400 relative z-20 shrink-0 cursor-pointer"><Trash2 className="w-5 h-5" /></button>
-                                        </div>
-                                        <div className="flex gap-2 mb-3">
-                                            <select value={char.categoryId || ''} onChange={(e) => changeCharacterCategory(char.id, e.target.value)} className="bg-gray-950 text-xs text-indigo-400 border border-gray-700 rounded px-2 py-1 outline-none cursor-pointer">
-                                                <option value="" disabled>Class</option>
-                                                {bible.characterCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                            </select>
-                                            <input className="bg-transparent text-xs text-gray-400 uppercase tracking-wider outline-none border-b border-transparent focus:border-gray-600" value={char.role} onChange={(e) => updateCharacter(char.id, {role: e.target.value})} placeholder="Role" />
-                                        </div>
-                                        
-                                        {/* Detailed Profile Fields */}
-                                        <div className="space-y-3 mb-4">
-                                            <div>
-                                                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Personality</label>
-                                                <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none" rows={2} value={char.personality || ''} onChange={(e) => updateCharacter(char.id, { personality: e.target.value })} placeholder="Habits, likes, dislikes..." />
-                                            </div>
-                                            <div>
-                                                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Appearance</label>
-                                                <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none" rows={2} value={char.appearance || ''} onChange={(e) => updateCharacter(char.id, { appearance: e.target.value })} placeholder="Visual description..." />
-                                            </div>
-                                            <div>
-                                                <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Dialogue Examples</label>
-                                                <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none italic" rows={2} value={char.dialogueExamples || ''} onChange={(e) => updateCharacter(char.id, { dialogueExamples: e.target.value })} placeholder="Quote examples..." />
-                                            </div>
-                                        </div>
+                        {bible.characters.map((char) => (
+                            <div key={char.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-700 relative group">
+                                 {/* Order Buttons */}
+                                 <div className="absolute right-14 top-5 flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => moveCharacter(char.id, 'up')} className="text-gray-500 hover:text-indigo-400"><ChevronUp className="w-4 h-4" /></button>
+                                        <button onClick={() => moveCharacter(char.id, 'down')} className="text-gray-500 hover:text-indigo-400"><ChevronDown className="w-4 h-4" /></button>
+                                </div>
 
-                                        {/* Dynamic Attributes */}
-                                        <div className="space-y-2 bg-gray-950/30 p-3 rounded border border-gray-800/50">
-                                            <div className="text-[10px] text-gray-600 uppercase font-bold mb-1">Stats & Attributes</div>
-                                            {char.attributes.map(attr => (
-                                                <div key={attr.id} className="flex gap-2 text-sm">
-                                                    <span className="text-gray-500 w-1/3 text-right text-xs pt-1">{attr.key}</span>
-                                                    <input className="flex-1 bg-transparent text-gray-200 outline-none border-b border-gray-800 focus:border-indigo-500" value={attr.value} onChange={(e) => updateCharAttr(char.id, attr.id, e.target.value)} />
-                                                </div>
-                                            ))}
-                                        </div>
+                                <div className="flex justify-between items-start mb-3 gap-2 pr-16">
+                                    <div className="flex-1 min-w-0">
+                                        <input className="bg-transparent text-lg font-bold text-gray-100 outline-none w-full" value={char.name} onChange={(e) => updateCharacter(char.id, { name: e.target.value })} placeholder="Name" />
                                     </div>
-                                </SortableItem>
-                            ))}
-                        </SortableContext>
+                                    <button type="button" onClick={(e) => deleteCharacter(e, char.id)} className="text-gray-600 hover:text-red-400 relative z-20 shrink-0 cursor-pointer"><Trash2 className="w-5 h-5" /></button>
+                                </div>
+                                <div className="flex gap-2 mb-3">
+                                    <select value={char.categoryId || ''} onChange={(e) => changeCharacterCategory(char.id, e.target.value)} className="bg-gray-950 text-xs text-indigo-400 border border-gray-700 rounded px-2 py-1 outline-none cursor-pointer">
+                                        <option value="" disabled>Class</option>
+                                        {bible.characterCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    <input className="bg-transparent text-xs text-gray-400 uppercase tracking-wider outline-none border-b border-transparent focus:border-gray-600" value={char.role} onChange={(e) => updateCharacter(char.id, {role: e.target.value})} placeholder="Role" />
+                                </div>
+                                
+                                {/* Detailed Profile Fields */}
+                                <div className="space-y-3 mb-4">
+                                    <div>
+                                        <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Personality</label>
+                                        <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none" rows={2} value={char.personality || ''} onChange={(e) => updateCharacter(char.id, { personality: e.target.value })} placeholder="Habits, likes, dislikes..." />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Appearance</label>
+                                        <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none" rows={2} value={char.appearance || ''} onChange={(e) => updateCharacter(char.id, { appearance: e.target.value })} placeholder="Visual description..." />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Dialogue Examples</label>
+                                        <textarea className="w-full bg-gray-950/50 border border-gray-800 rounded p-2 text-sm text-gray-300 outline-none italic" rows={2} value={char.dialogueExamples || ''} onChange={(e) => updateCharacter(char.id, { dialogueExamples: e.target.value })} placeholder="Quote examples..." />
+                                    </div>
+                                </div>
+
+                                {/* Dynamic Attributes */}
+                                <div className="space-y-2 bg-gray-950/30 p-3 rounded border border-gray-800/50">
+                                    <div className="text-[10px] text-gray-600 uppercase font-bold mb-1">Stats & Attributes</div>
+                                    {char.attributes.map(attr => (
+                                        <div key={attr.id} className="flex gap-2 text-sm">
+                                            <span className="text-gray-500 w-1/3 text-right text-xs pt-1">{attr.key}</span>
+                                            <input className="flex-1 bg-transparent text-gray-200 outline-none border-b border-gray-800 focus:border-indigo-500" value={attr.value} onChange={(e) => updateCharAttr(char.id, attr.id, e.target.value)} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
 
@@ -964,32 +856,32 @@ const BibleManager: React.FC<BibleManagerProps> = ({ bible, setBible, view }) =>
                             <h2 className="text-xl font-bold text-gray-100">Classes</h2>
                             <button onClick={addCharClass} className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm flex gap-2 items-center cursor-pointer"><Plus className="w-4 h-4"/> Add Class</button>
                         </div>
-                        <SortableContext items={bible.characterCategories.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                            {bible.characterCategories.map(cat => (
-                                <SortableItem key={cat.id} id={cat.id} data={{ type: 'CHAR_CLASS', item: cat }}>
-                                    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                                        <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-2">
-                                            <input className="bg-transparent font-bold text-white outline-none" value={cat.name} onChange={(e) => updateCharClass(cat.id, { name: e.target.value })} />
-                                            <button type="button" onClick={(e) => deleteCharClass(e, cat.id)} className="text-gray-600 hover:text-red-400 relative z-20 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                        {bible.characterCategories.map(cat => (
+                            <div key={cat.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 relative group">
+                                <div className="absolute right-12 top-4 flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => moveCharClass(cat.id, 'up')} className="text-gray-500 hover:text-indigo-400"><ChevronUp className="w-4 h-4" /></button>
+                                        <button onClick={() => moveCharClass(cat.id, 'down')} className="text-gray-500 hover:text-indigo-400"><ChevronDown className="w-4 h-4" /></button>
+                                </div>
+                                <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-2 pr-12">
+                                    <input className="bg-transparent font-bold text-white outline-none" value={cat.name} onChange={(e) => updateCharClass(cat.id, { name: e.target.value })} />
+                                    <button type="button" onClick={(e) => deleteCharClass(e, cat.id)} className="text-gray-600 hover:text-red-400 relative z-20 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                                </div>
+                                <div className="space-y-2">
+                                    {cat.template.map(t => (
+                                        <div key={t.id} className="flex gap-2">
+                                            <input className="bg-gray-950 border border-gray-800 rounded px-2 py-1 text-sm text-gray-300 flex-1" value={t.key} onChange={(e) => updateCharTemplate(cat.id, t.id, e.target.value)} />
+                                            <button type="button" onClick={(e) => deleteCharTemplate(e, cat.id, t.id)} className="text-gray-600 hover:text-red-400 relative z-20 cursor-pointer"><X className="w-3 h-3"/></button>
                                         </div>
-                                        <div className="space-y-2">
-                                            {cat.template.map(t => (
-                                                <div key={t.id} className="flex gap-2">
-                                                    <input className="bg-gray-950 border border-gray-800 rounded px-2 py-1 text-sm text-gray-300 flex-1" value={t.key} onChange={(e) => updateCharTemplate(cat.id, t.id, e.target.value)} />
-                                                    <button type="button" onClick={(e) => deleteCharTemplate(e, cat.id, t.id)} className="text-gray-600 hover:text-red-400 relative z-20 cursor-pointer"><X className="w-3 h-3"/></button>
-                                                </div>
-                                            ))}
-                                            <button onClick={() => addCharTemplate(cat.id)} className="text-xs text-indigo-400 flex gap-1 items-center mt-2 cursor-pointer"><Plus className="w-3 h-3"/> Add Field</button>
-                                        </div>
-                                    </div>
-                                </SortableItem>
-                            ))}
-                        </SortableContext>
+                                    ))}
+                                    <button onClick={() => addCharTemplate(cat.id)} className="text-xs text-indigo-400 flex gap-1 items-center mt-2 cursor-pointer"><Plus className="w-3 h-3"/> Add Field</button>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>
         )}
-    </DndContext>
+    </>
   );
 };
 
